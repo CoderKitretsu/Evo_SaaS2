@@ -13,6 +13,7 @@ import ConnectionManager from './components/features/ConnectionManager'
 // Test Components (temporary)
 import CampaignAdapterTest from './components/CampaignAdapterTest'
 import CampaignServiceTest from './components/CampaignServiceTest'
+import CampaignBuilderTest from './components/CampaignBuilderTest'
 
 function App() {
   // State management
@@ -336,9 +337,23 @@ function App() {
             >
               Test Service
             </button>
+            <button
+              onClick={() => setTestMode('builder')}
+              style={{ 
+                padding: '5px 10px', 
+                background: testMode === 'builder' ? '#28a745' : '#6c757d', 
+                color: 'white', 
+                border: 'none', 
+                borderRadius: '4px' 
+              }}
+            >
+              Test Builder UI
+            </button>
           </div>
         </div>
-        {testMode === 'adapter' ? <CampaignAdapterTest /> : <CampaignServiceTest />}
+        {testMode === 'adapter' ? <CampaignAdapterTest /> : 
+         testMode === 'service' ? <CampaignServiceTest /> : 
+         <CampaignBuilderTest />}
       </div>
     )
   }
