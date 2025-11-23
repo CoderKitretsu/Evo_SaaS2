@@ -10,6 +10,8 @@ import EmptyState from './components/elements/EmptyState'
 import MessagingHub from './pages/MessagingHub'
 import ModalManager from './components/features/ModalManager'
 import ConnectionManager from './components/features/ConnectionManager'
+// Test Component (temporary)
+import CampaignAdapterTest from './components/CampaignAdapterTest'
 
 function App() {
   // State management
@@ -27,6 +29,9 @@ function App() {
   const [progressText, setProgressText] = useState('Waiting for scan...')
   const [progressLog, setProgressLog] = useState('')
   const [alertMessage, setAlertMessage] = useState(null)
+  
+  // Test mode (temporary)
+  const [showCampaignTest, setShowCampaignTest] = useState(false)
 
   // Refs for timers
   const pollTimer = useRef(null)
@@ -293,6 +298,23 @@ function App() {
     showAlert('info', 'Configuration cleared for testing')
   }
 
+  // Show campaign test if enabled
+  if (showCampaignTest) {
+    return (
+      <div>
+        <div style={{ padding: '10px', background: '#f0f0f0', borderBottom: '1px solid #ccc' }}>
+          <button 
+            onClick={() => setShowCampaignTest(false)}
+            style={{ padding: '5px 15px', background: '#007bff', color: 'white', border: 'none', borderRadius: '4px' }}
+          >
+            ← Back to App
+          </button>
+        </div>
+        <CampaignAdapterTest />
+      </div>
+    )
+  }
+
   // Show API configuration screen if not configured
   if (showApiConfig || !apiConfigured) {
     return (
@@ -352,6 +374,28 @@ function App() {
         onRefreshInstances={fetchInstances}
         onOpenModal={openModal}
       />
+
+      {/* Test Button (Development Only) */}
+      {process.env.NODE_ENV === 'development' && (
+        <div style={{ position: 'fixed', top: '10px', left: '10px', zIndex: 9999 }}>
+          <button
+            onClick={() => setShowCampaignTest(true)}
+            style={{
+              padding: '8px 16px',
+              background: '#ff6b35',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              fontSize: '12px',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+            }}
+          >
+            🧪 Test Campaign Adapter
+          </button>
+        </div>
+      )}
 
       {/* Empty State Component */}
       {!hasSelectedInstance && (
