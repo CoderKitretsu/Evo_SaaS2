@@ -10,8 +10,9 @@ import EmptyState from './components/elements/EmptyState'
 import MessagingHub from './pages/MessagingHub'
 import ModalManager from './components/features/ModalManager'
 import ConnectionManager from './components/features/ConnectionManager'
-// Test Component (temporary)
+// Test Components (temporary)
 import CampaignAdapterTest from './components/CampaignAdapterTest'
+import CampaignServiceTest from './components/CampaignServiceTest'
 
 function App() {
   // State management
@@ -32,6 +33,7 @@ function App() {
   
   // Test mode (temporary)
   const [showCampaignTest, setShowCampaignTest] = useState(false)
+  const [testMode, setTestMode] = useState('adapter') // 'adapter' or 'service'
 
   // Refs for timers
   const pollTimer = useRef(null)
@@ -302,15 +304,41 @@ function App() {
   if (showCampaignTest) {
     return (
       <div>
-        <div style={{ padding: '10px', background: '#f0f0f0', borderBottom: '1px solid #ccc' }}>
+        <div style={{ padding: '10px', background: '#f0f0f0', borderBottom: '1px solid #ccc', display: 'flex', gap: '10px', alignItems: 'center' }}>
           <button 
             onClick={() => setShowCampaignTest(false)}
             style={{ padding: '5px 15px', background: '#007bff', color: 'white', border: 'none', borderRadius: '4px' }}
           >
             ← Back to App
           </button>
+          <div style={{ display: 'flex', gap: '5px' }}>
+            <button
+              onClick={() => setTestMode('adapter')}
+              style={{ 
+                padding: '5px 10px', 
+                background: testMode === 'adapter' ? '#28a745' : '#6c757d', 
+                color: 'white', 
+                border: 'none', 
+                borderRadius: '4px' 
+              }}
+            >
+              Test Adapter
+            </button>
+            <button
+              onClick={() => setTestMode('service')}
+              style={{ 
+                padding: '5px 10px', 
+                background: testMode === 'service' ? '#28a745' : '#6c757d', 
+                color: 'white', 
+                border: 'none', 
+                borderRadius: '4px' 
+              }}
+            >
+              Test Service
+            </button>
+          </div>
         </div>
-        <CampaignAdapterTest />
+        {testMode === 'adapter' ? <CampaignAdapterTest /> : <CampaignServiceTest />}
       </div>
     )
   }
