@@ -69,6 +69,17 @@ const CampaignBuilder = ({ draftId: initialDraftId, onComplete, onCancel }) => {
 
   const handleNext = async () => {
     if (currentStep < steps.length) {
+      // Refresh draft data when moving to Step 4 (Review)
+      if (currentStep === 3) {
+        try {
+          const latestDraft = campaignService.getDraft(draftId);
+          if (latestDraft) {
+            setDraftData(latestDraft);
+          }
+        } catch (error) {
+          console.error('Failed to refresh draft data:', error);
+        }
+      }
       setCurrentStep(prev => prev + 1);
     }
   };

@@ -103,7 +103,10 @@ const parseDateTime = (dateTimeString) => {
  * Step 3: Advanced Message Studio
  * Message composition, placeholders, emoji picker, attachments, templates, preview, scheduling
  */
-const Step3_Message = ({ contactsData, onBack, onNext, initialData = {} }) => {
+const Step3_Message = ({ draftId, draftData, contactsData, onBack, onNext, initialData = {} }) => {
+  console.log('Step3_Message props:', { draftId, draftData, contactsData: !!contactsData });
+  console.log('Draft details structure:', draftData?.details);
+  
   // Core message state
   const [messageText, setMessageText] = useState(initialData.message || '');
   const [cursorPosition, setCursorPosition] = useState(0);
@@ -143,20 +146,28 @@ const Step3_Message = ({ contactsData, onBack, onNext, initialData = {} }) => {
 
   // Save draft whenever data changes
   useEffect(() => {
-    const draftData = {
-      message: messageText,
-      attachments,
-      scheduleEnabled,
-      scheduleDateTime,
-      lastModified: Date.now()
+    if (!draftId || !messageText) return;
+    
+    const messageData = {
+      message: {
+        text: messageText,
+        attachments,
+        scheduleEnabled,
+        scheduleDateTime,
+        lastModified: Date.now()
+      }
     };
     
     const debouncedSave = setTimeout(() => {
-      campaignService.saveDraft(draftData);
+      try {
+        campaignService.saveDraft(draftId, messageData);
+      } catch (error) {
+        console.error('Error saving draft:', error);
+      }
     }, 500);
 
     return () => clearTimeout(debouncedSave);
-  }, [messageText, attachments, scheduleEnabled, scheduleDateTime]);
+  }, [draftId, messageText, attachments, scheduleEnabled, scheduleDateTime]);
 
   // Generate preview contacts when contacts data changes
   useEffect(() => {
@@ -322,12 +333,24 @@ const Step3_Message = ({ contactsData, onBack, onNext, initialData = {} }) => {
         errors.push('Schedule time must be in the future');
       }
       
-      // Check against campaign window if available
-      if (contactsData?.campaignWindow) {
-        const { startTime, endTime } = contactsData.campaignWindow;
-        if (scheduleTime < startTime || scheduleTime > endTime) {
-          errors.push('Schedule time must be within campaign window');
+      // Check against campaign window from draftData
+      const campaignStartAt = draftData?.meta?.startAt;
+      const campaignEndAt = draftData?.meta?.endAt;
+      
+      if (campaignStartAt && campaignEndAt) {
+        // campaignStartAt and campaignEndAt are already timestamps from Step1
+        const campaignStart = campaignStartAt;
+        const campaignEnd = campaignEndAt;
+        
+        if (scheduleTime < campaignStart) {
+          errors.push(`Schedule time must be after campaign start: ${formatDateTime(new Date(campaignStart))}`);
         }
+        
+        if (scheduleTime > campaignEnd) {
+          errors.push(`Schedule time must be before campaign end: ${formatDateTime(new Date(campaignEnd))}`);
+        }
+      } else {
+        errors.push('Campaign window not configured. Please complete Step 1 first.');
       }
     }
     
@@ -339,7 +362,7 @@ const Step3_Message = ({ contactsData, onBack, onNext, initialData = {} }) => {
     if (scheduleEnabled) {
       validateSchedule();
     }
-  }, [scheduleDateTime, scheduleEnabled]);
+  }, [scheduleDateTime, scheduleEnabled, draftData]);
 
   const handleTestSend = async () => {
     if (!testSendNumber.trim()) {
@@ -444,7 +467,7 @@ const Step3_Message = ({ contactsData, onBack, onNext, initialData = {} }) => {
     }
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (!messageText.trim()) {
       alert('Please enter a message');
       return;
@@ -455,17 +478,35 @@ const Step3_Message = ({ contactsData, onBack, onNext, initialData = {} }) => {
       return;
     }
     
-    const data = {
-      message: messageText,
-      attachments,
-      scheduleEnabled,
-      scheduleDateTime,
-      characterCount,
-      smsSegments,
-      templates: savedTemplates.filter(t => t.category === 'Custom')
+    // Save message data to draft before proceeding
+    const messageData = {
+      message: {
+        text: messageText,
+        attachments,
+        scheduleEnabled,
+        scheduleDateTime,
+        characterCount,
+        smsSegments,
+        templates: savedTemplates.filter(t => t.category === 'Custom')
+      }
     };
     
-    onNext(data);
+    if (!draftId) {
+      alert('Draft ID is not available. Please try refreshing the page.');
+      return;
+    }
+    
+    try {
+      const result = await campaignService.saveDraft(draftId, messageData);
+      if (result.success) {
+        onNext(messageData);
+      } else {
+        alert('Failed to save message data: ' + result.error);
+      }
+    } catch (error) {
+      console.error('Error saving message:', error);
+      alert('Error saving message: ' + error.message);
+    }
   };
 
   return (
@@ -677,22 +718,49 @@ const Step3_Message = ({ contactsData, onBack, onNext, initialData = {} }) => {
         {/* Schedule Manager */}
         <div className="schedule-section">
           <h3>Schedule Manager</h3>
+          
+          {/* Campaign Window Info */}
+          <div className="campaign-window-info">
+            <div className="info-header">📅 Campaign Window (from Step 1):</div>
+            <div className="info-content">
+              {draftData?.meta?.startAt ? 
+                `${formatDateTime(new Date(draftData.meta.startAt))} to ${formatDateTime(new Date(draftData.meta.endAt))}` :
+                'Not configured'
+              }
+            </div>
+          </div>
+
           <label className="schedule-checkbox">
             <input
               type="checkbox"
               checked={scheduleEnabled}
               onChange={(e) => setScheduleEnabled(e.target.checked)}
             />
-            Schedule message for later
+            Schedule specific send time (within campaign window)
           </label>
           
           {scheduleEnabled && (
             <div className="schedule-controls">
+              <div className="schedule-input-label">
+                📤 Message Send Time:
+              </div>
               <input
                 type="datetime-local"
                 value={scheduleDateTime}
                 onChange={(e) => setScheduleDateTime(e.target.value)}
                 className="datetime-input"
+                min={(() => {
+                  const startAt = draftData?.meta?.startAt;
+                  if (!startAt) return undefined;
+                  const startDate = new Date(startAt).toISOString();
+                  return startDate.split('T')[0] + 'T' + startDate.split('T')[1].substring(0, 5);
+                })()}
+                max={(() => {
+                  const endAt = draftData?.meta?.endAt;
+                  if (!endAt) return undefined;
+                  const endDate = new Date(endAt).toISOString();
+                  return endDate.split('T')[0] + 'T' + endDate.split('T')[1].substring(0, 5);
+                })()}
               />
               {scheduleErrors.length > 0 && (
                 <div className="schedule-errors">
@@ -703,7 +771,7 @@ const Step3_Message = ({ contactsData, onBack, onNext, initialData = {} }) => {
               )}
               {scheduleDateTime && scheduleErrors.length === 0 && (
                 <div className="schedule-info">
-                  ✅ Scheduled for: {formatDateTime(parseDateTime(scheduleDateTime))}
+                  ✅ Messages will send: {formatDateTime(parseDateTime(scheduleDateTime))}
                 </div>
               )}
             </div>

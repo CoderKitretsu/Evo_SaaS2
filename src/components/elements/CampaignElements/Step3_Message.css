@@ -500,6 +500,35 @@
   margin-bottom: 16px;
 }
 
+/* Campaign Window Info */
+.campaign-window-info {
+  background: #f0f9ff;
+  border: 1px solid #0ea5e9;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.campaign-window-info .info-header {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0c4a6e;
+  margin-bottom: 4px;
+}
+
+.campaign-window-info .info-content {
+  font-size: 14px;
+  color: #0369a1;
+  font-family: monospace;
+}
+
+.schedule-input-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 4px;
+}
+
 .schedule-checkbox {
   display: flex;
   align-items: center;
