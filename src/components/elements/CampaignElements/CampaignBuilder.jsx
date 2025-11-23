@@ -245,6 +245,12 @@ const CampaignBuilder = ({ draftId: initialDraftId, onComplete, onCancel }) => {
                   isFirst={currentStep === 1}
                   isLast={currentStep === steps.length}
                   onComplete={onComplete}
+                  // Pass specific data for Step3_Message
+                  contactsData={currentStep === 3 ? {
+                    contacts: draftData.contacts,
+                    instanceId: draftData.meta?.instanceId
+                  } : undefined}
+                  initialData={currentStep === 3 ? draftData.message : undefined}
                 />
               ) : (
                 <div className="p-6">

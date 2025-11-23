@@ -1,634 +1,785 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import campaignService from './campaignService.js';
+import './Step3_Message.css';
+
+/**
+ * Phone number normalization (E.164 format)
+ */
+const normalizePhone = (phone) => {
+  if (!phone) return null;
+  
+  // Remove all non-digit characters
+  const digits = phone.replace(/\D/g, '');
+  
+  if (digits.length === 0) return null;
+  
+  // Handle different formats
+  let normalized = digits;
+  
+  // If starts with country code, keep as is
+  if (digits.length >= 10) {
+    // If it's 10 digits, assume it needs country code (default to +1 for US)
+    if (digits.length === 10) {
+      normalized = '1' + digits;
+    }
+    // Add + prefix
+    normalized = '+' + normalized;
+  } else {
+    return null; // Too short to be valid
+  }
+  
+  return normalized;
+};
+
+/**
+ * Emoji data for picker
+ */
+const EMOJI_CATEGORIES = {
+  'Smileys': ['😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😝', '😜', '🤪', '🤨', '🧐', '🤓', '😎'],
+  'Gestures': ['👍', '👎', '👌', '🤏', '✌️', '🤞', '🤟', '🤘', '🤙', '👈', '👉', '👆', '🖕', '👇', '☝️', '👋', '🤚', '🖐️', '✋', '🖖', '👏', '🙌', '👐', '🤲', '🤝', '🙏'],
+  'Objects': ['📱', '💻', '🖥️', '⌨️', '🖱️', '🖲️', '💽', '💾', '💿', '📀', '📼', '📷', '📸', '📹', '🎥', '📞', '☎️', '📟', '📠', '📺', '📻', '🎙️', '🎚️', '🎛️', '⏰', '⏲️', '⏱️', '⏳'],
+  'Symbols': ['❤️', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💔', '❣️', '💕', '💞', '💓', '💗', '💖', '💘', '💝', '💟', '☮️', '✝️', '☪️', '🕉️', '☸️', '✡️', '🔯', '🕎', '☯️']
+};
+
+/**
+ * Message templates for save/load functionality
+ */
+const DEFAULT_TEMPLATES = [
+  {
+    id: 'welcome',
+    name: 'Welcome Message',
+    text: 'Hello {name}! Welcome to our service. We\'re excited to have you on board! 😊',
+    category: 'Onboarding'
+  },
+  {
+    id: 'promotion',
+    name: 'Promotional Offer',
+    text: 'Hi {name}! 🎉 Special offer just for you! Get 20% off your next purchase. Use code: SAVE20',
+    category: 'Marketing'
+  },
+  {
+    id: 'reminder',
+    name: 'Appointment Reminder',
+    text: 'Hi {name}, this is a reminder about your appointment scheduled for tomorrow at {time}. See you soon! 📅',
+    category: 'Reminders'
+  }
+];
+
+/**
+ * Utility functions
+ */
+const generateId = () => Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+
+const generateHash = (text) => {
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    const char = text.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return Math.abs(hash).toString(16);
+};
+
+const formatDateTime = (timestamp) => {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  return date.toLocaleString('en-US', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+};
+
+const parseDateTime = (dateTimeString) => {
+  if (!dateTimeString) return null;
+  const date = new Date(dateTimeString);
+  return isNaN(date.getTime()) ? null : date.getTime();
+};
 
 /**
  * Step 3: Advanced Message Studio
- * Features: Message editor, placeholder insertion, emoji picker, attachments, 
- * template save/load, preview, character counter, test send, schedule manager
+ * Message composition, placeholders, emoji picker, attachments, templates, preview, scheduling
  */
-const Step3_Message = ({ draftId, draftData, onDataChange, onNext, onBack, isFirst, isLast }) => {
-  const [messageText, setMessageText] = useState('');
-  const [attachments, setAttachments] = useState([]);
-  const [schedules, setSchedules] = useState([]);
+const Step3_Message = ({ contactsData, onBack, onNext, initialData = {} }) => {
+  // Core message state
+  const [messageText, setMessageText] = useState(initialData.message || '');
+  const [cursorPosition, setCursorPosition] = useState(0);
+  const textareaRef = useRef(null);
+  
+  // UI state
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [showPlaceholders, setShowPlaceholders] = useState(false);
-  const [showTemplates, setShowTemplates] = useState(false);
-  const [availableVariables, setAvailableVariables] = useState([]);
+  const [activeEmojiCategory, setActiveEmojiCategory] = useState('Smileys');
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+  
+  // Attachments state
+  const [attachments, setAttachments] = useState(initialData.attachments || []);
+  
+  // Templates state
+  const [savedTemplates, setSavedTemplates] = useState(DEFAULT_TEMPLATES);
+  const [templateName, setTemplateName] = useState('');
+  const [templateCategory, setTemplateCategory] = useState('Custom');
+  
+  // Schedule state
+  const [scheduleEnabled, setScheduleEnabled] = useState(initialData.scheduleEnabled || false);
+  const [scheduleDateTime, setScheduleDateTime] = useState(initialData.scheduleDateTime || '');
+  const [scheduleErrors, setScheduleErrors] = useState([]);
+  
+  // Preview state
+  const [showPreview, setShowPreview] = useState(false);
   const [previewContacts, setPreviewContacts] = useState([]);
-  const [characterCount, setCharacterCount] = useState(0);
-  const [messageSegments, setMessageSegments] = useState(1);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [templates, setTemplates] = useState([]);
+  
+  // Test send state
+  const [testSendNumber, setTestSendNumber] = useState('');
+  const [isSendingTest, setIsSendingTest] = useState(false);
 
-  // Load existing message and schedule data
+  // Calculate character count and SMS segments
+  const characterCount = messageText.length;
+  const smsSegments = Math.ceil(characterCount / 160) || 1;
+  const showCharacterWarning = characterCount > 160;
+
+  // Save draft whenever data changes
   useEffect(() => {
-    if (draftId) {
-      loadExistingData();
+    const draftData = {
+      message: messageText,
+      attachments,
+      scheduleEnabled,
+      scheduleDateTime,
+      lastModified: Date.now()
+    };
+    
+    const debouncedSave = setTimeout(() => {
+      campaignService.saveDraft(draftData);
+    }, 500);
+
+    return () => clearTimeout(debouncedSave);
+  }, [messageText, attachments, scheduleEnabled, scheduleDateTime]);
+
+  // Generate preview contacts when contacts data changes
+  useEffect(() => {
+    if (contactsData?.contacts?.rows && Array.isArray(contactsData.contacts.rows)) {
+      // Get contacts from Step 2 data structure
+      const validContacts = contactsData.contacts.rows.filter(contact => contact?.isValid);
+      const samples = validContacts.slice(0, 3).map(contact => ({
+        ...contact,
+        previewText: mergePlaceholders(messageText, contact)
+      }));
+      setPreviewContacts(samples);
+    } else if (contactsData?.rows && Array.isArray(contactsData.rows)) {
+      // Alternative structure: direct rows array
+      const validContacts = contactsData.rows.filter(contact => contact?.isValid);
+      const samples = validContacts.slice(0, 3).map(contact => ({
+        ...contact,
+        previewText: mergePlaceholders(messageText, contact)
+      }));
+      setPreviewContacts(samples);
+    } else {
+      // No contacts data available - set empty array
+      setPreviewContacts([]);
     }
-  }, [draftId]);
+  }, [contactsData, messageText]);
 
-  // Update character count and segments when message changes
+  // Track cursor position
   useEffect(() => {
-    setCharacterCount(messageText.length);
-    // SMS segments: 160 chars for single, 153 for multi-part
-    const segmentSize = messageText.length <= 160 ? 160 : 153;
-    setMessageSegments(Math.ceil(messageText.length / segmentSize) || 1);
-  }, [messageText]);
+    if (textareaRef.current) {
+      textareaRef.current.addEventListener('selectionchange', updateCursorPosition);
+      return () => {
+        if (textareaRef.current) {
+          textareaRef.current.removeEventListener('selectionchange', updateCursorPosition);
+        }
+      };
+    }
+  }, []);
 
-  const loadExistingData = () => {
-    try {
-      const draft = campaignService.getDraft(draftId);
-      if (draft) {
-        // Load message data
-        if (draft.message) {
-          setMessageText(draft.message.text || '');
-          setAttachments(draft.message.attachments || []);
-        }
-        
-        // Load schedules
-        if (draft.schedules) {
-          setSchedules(draft.schedules);
-        }
-
-        // Extract available variables from contacts
-        if (draft.contacts && draft.contacts.rows) {
-          const variables = new Set(['name']); // Always include name
-          draft.contacts.rows.forEach(contact => {
-            if (contact.vars) {
-              Object.keys(contact.vars).forEach(key => variables.add(key));
-            }
-          });
-          setAvailableVariables(Array.from(variables));
-          
-          // Set preview contacts (first 3)
-          setPreviewContacts(draft.contacts.rows.slice(0, 3));
-        }
-      }
-    } catch (error) {
-      console.error('Failed to load message data:', error);
+  const updateCursorPosition = () => {
+    if (textareaRef.current) {
+      setCursorPosition(textareaRef.current.selectionStart);
     }
   };
 
-  const insertPlaceholder = (variable) => {
-    const placeholder = `{${variable}}`;
-    const textarea = document.getElementById('message-textarea');
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
+  const mergePlaceholders = (text, contact) => {
+    if (!text || !contact) return text;
     
-    const newText = messageText.substring(0, start) + placeholder + messageText.substring(end);
-    setMessageText(newText);
+    let merged = text;
     
-    // Restore cursor position
-    setTimeout(() => {
-      textarea.focus();
-      textarea.setSelectionRange(start + placeholder.length, start + placeholder.length);
-    }, 0);
+    // Handle direct contact properties
+    if (contact.phone) {
+      merged = merged.replace(/\{phone\}/gi, contact.phone || '[phone]');
+    }
     
-    setShowPlaceholders(false);
+    // Handle vars object from Step 2 contacts structure
+    if (contact.vars) {
+      Object.keys(contact.vars).forEach(key => {
+        const placeholder = `{${key}}`;
+        const regex = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+        merged = merged.replace(regex, contact.vars[key] || `[${key}]`);
+      });
+    }
+    
+    // Handle direct properties as fallback
+    Object.keys(contact).forEach(key => {
+      if (key !== 'vars' && typeof contact[key] === 'string') {
+        const placeholder = `{${key}}`;
+        const regex = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+        merged = merged.replace(regex, contact[key] || `[${key}]`);
+      }
+    });
+    
+    return merged;
+  };
+
+  const insertAtCursor = (textToInsert) => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const newText = messageText.substring(0, start) + textToInsert + messageText.substring(end);
+      
+      setMessageText(newText);
+      
+      // Restore cursor position after text insertion
+      setTimeout(() => {
+        textarea.focus();
+        textarea.setSelectionRange(start + textToInsert.length, start + textToInsert.length);
+      }, 0);
+    }
+  };
+
+  const insertPlaceholder = (placeholder) => {
+    insertAtCursor(`{${placeholder}}`);
   };
 
   const insertEmoji = (emoji) => {
-    const textarea = document.getElementById('message-textarea');
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    
-    const newText = messageText.substring(0, start) + emoji + messageText.substring(end);
-    setMessageText(newText);
-    
-    setTimeout(() => {
-      textarea.focus();
-      textarea.setSelectionRange(start + emoji.length, start + emoji.length);
-    }, 0);
-    
+    insertAtCursor(emoji);
     setShowEmojiPicker(false);
   };
 
-  const handleFileUpload = (event) => {
+  const handleFileAttachment = (event) => {
     const files = Array.from(event.target.files);
+    const maxFileSize = 5 * 1024 * 1024; // 5MB limit
     
-    files.forEach(file => {
-      // TODO: Implement proper file handling - store metadata only, not blobs
-      const attachment = {
-        id: 'att-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
-        type: file.type.startsWith('image/') ? 'image' : 'document',
-        name: file.name,
-        size: file.size,
-        meta: {
-          lastModified: file.lastModified,
-          // TODO: Generate object URL for preview (temporary)
-          previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : null
-        }
-      };
-      
-      setAttachments(prev => [...prev, attachment]);
-    });
-  };
-
-  const removeAttachment = (attachmentId) => {
-    setAttachments(prev => {
-      const updated = prev.filter(att => att.id !== attachmentId);
-      // TODO: Revoke object URLs to prevent memory leaks
-      const removed = prev.find(att => att.id === attachmentId);
-      if (removed && removed.meta.previewUrl) {
-        URL.revokeObjectURL(removed.meta.previewUrl);
+    const validFiles = files.filter(file => {
+      if (file.size > maxFileSize) {
+        alert(`File ${file.name} is too large. Maximum size is 5MB.`);
+        return false;
       }
-      return updated;
+      return true;
     });
-  };
-
-  const addSchedule = () => {
-    const newSchedule = {
-      id: 'schedule-' + Date.now(),
-      type: 'one-time',
-      timestamp: Date.now() + 3600000, // 1 hour from now
-      description: 'New send time'
-    };
     
-    setSchedules(prev => [...prev, newSchedule]);
-  };
-
-  const updateSchedule = (scheduleId, field, value) => {
-    setSchedules(prev => 
-      prev.map(schedule => 
-        schedule.id === scheduleId 
-          ? { ...schedule, [field]: value }
-          : schedule
-      )
-    );
-  };
-
-  const removeSchedule = (scheduleId) => {
-    setSchedules(prev => prev.filter(schedule => schedule.id !== scheduleId));
-  };
-
-  const previewMessage = (contact) => {
-    let preview = messageText;
+    const fileMetadata = validFiles.map(file => ({
+      id: generateId(),
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      hash: generateHash(file.name + file.size),
+      uploadedAt: Date.now()
+    }));
     
-    // Replace placeholders with actual values
-    if (contact.vars) {
-      Object.entries(contact.vars).forEach(([key, value]) => {
-        const placeholder = `{${key}}`;
-        preview = preview.replace(new RegExp(placeholder, 'g'), value || `{${key}}`);
-      });
-    }
-    
-    return preview;
+    setAttachments(prev => [...prev, ...fileMetadata]);
   };
 
-  const handleTestSend = async () => {
-    // TODO: Implement test send functionality
-    // Should respect dryRun setting and send to configured test number
-    console.log('TODO: Implement test send');
-    setError('Test send functionality coming soon');
+  const removeAttachment = (id) => {
+    setAttachments(prev => prev.filter(att => att.id !== id));
   };
 
   const saveAsTemplate = () => {
-    // TODO: Implement template saving
-    const template = {
-      id: 'template-' + Date.now(),
-      name: `Template ${new Date().toLocaleDateString()}`,
-      message: {
-        text: messageText,
-        attachments: attachments.map(att => ({ ...att, meta: { ...att.meta, previewUrl: null } })) // Remove URLs
-      },
+    if (!templateName.trim()) {
+      alert('Please enter a template name');
+      return;
+    }
+    
+    const newTemplate = {
+      id: generateId(),
+      name: templateName,
+      text: messageText,
+      category: templateCategory,
       createdAt: Date.now()
     };
     
-    setTemplates(prev => [...prev, template]);
-    console.log('Template saved:', template);
+    setSavedTemplates(prev => [...prev, newTemplate]);
+    setTemplateName('');
+    setTemplateCategory('Custom');
+    setShowSaveTemplate(false);
+    alert('Template saved successfully!');
   };
 
   const loadTemplate = (template) => {
-    setMessageText(template.message.text);
-    setAttachments(template.message.attachments || []);
-    setShowTemplates(false);
+    setMessageText(template.text);
+    setShowTemplatePicker(false);
   };
 
-  const validateSchedulesInCampaignWindow = () => {
-    if (!draftData || !draftData.meta) return true;
-    
-    const { startAt, endAt } = draftData.meta;
-    if (!startAt) return true;
-
+  const validateSchedule = () => {
     const errors = [];
-    schedules.forEach(schedule => {
-      if (schedule.timestamp < startAt) {
-        errors.push(`Schedule "${schedule.description}" is before campaign start time`);
+    
+    if (scheduleEnabled && scheduleDateTime) {
+      const scheduleTime = parseDateTime(scheduleDateTime);
+      const now = Date.now();
+      
+      if (scheduleTime <= now) {
+        errors.push('Schedule time must be in the future');
       }
-      if (endAt && schedule.timestamp > endAt) {
-        errors.push(`Schedule "${schedule.description}" is after campaign end time`);
+      
+      // Check against campaign window if available
+      if (contactsData?.campaignWindow) {
+        const { startTime, endTime } = contactsData.campaignWindow;
+        if (scheduleTime < startTime || scheduleTime > endTime) {
+          errors.push('Schedule time must be within campaign window');
+        }
       }
-    });
-
-    if (errors.length > 0) {
-      setError(errors.join('. '));
-      return false;
     }
-    return true;
+    
+    setScheduleErrors(errors);
+    return errors.length === 0;
   };
 
-  const handleNext = async () => {
+  useEffect(() => {
+    if (scheduleEnabled) {
+      validateSchedule();
+    }
+  }, [scheduleDateTime, scheduleEnabled]);
+
+  const handleTestSend = async () => {
+    if (!testSendNumber.trim()) {
+      alert('Please enter a phone number for test send');
+      return;
+    }
+    
     if (!messageText.trim()) {
-      setError('Please enter a message');
+      alert('Please enter a message to send');
       return;
     }
 
-    if (schedules.length === 0) {
-      setError('Please add at least one schedule');
+    // Normalize the phone number to E.164 format
+    const normalizedPhone = normalizePhone(testSendNumber);
+    if (!normalizedPhone) {
+      alert('Please enter a valid phone number.\n\nExamples:\n• +1234567890 (with country code)\n• 1234567890 (US number)\n• +919876543210 (India number)');
       return;
     }
 
-    if (!validateSchedulesInCampaignWindow()) {
+    // Get API configuration and instance data from campaign context
+    const apiUrl = localStorage.getItem('apiUrl') || 'http://localhost:8080';
+    const apiKey = localStorage.getItem('apiKey') || '';
+    
+    if (!apiUrl || !apiKey) {
+      alert('API configuration is required. Please configure API settings first.');
       return;
     }
 
-    setLoading(true);
+    // Get instance from contactsData (passed from Step 1)
+    const instanceId = contactsData?.instanceId || initialData?.instanceId;
+    
+    if (!instanceId) {
+      alert('WhatsApp instance is required. Please select an instance in Step 1.');
+      return;
+    }
+
+    setIsSendingTest(true);
+    
     try {
-      const messageData = {
-        text: messageText,
-        templateHash: 'hash-' + Date.now(), // TODO: Generate proper hash
-        attachments: attachments.map(att => ({ ...att, meta: { ...att.meta, previewUrl: null } })) // Remove URLs for storage
+      // Create test contact for placeholder replacement using normalized phone
+      const testContact = { 
+        name: 'Test User', 
+        phone: normalizedPhone,
+        vars: { name: 'Test User', phone: normalizedPhone } 
       };
-
-      const result = campaignService.saveDraft(draftId, {
-        message: messageData,
-        schedules: schedules
+      const mergedMessage = mergePlaceholders(messageText, testContact);
+      
+      // Build headers for API request
+      const buildHeaders = () => ({
+        "Content-Type": "application/json",
+        "apikey": apiKey.trim()
       });
       
-      if (result.success) {
-        onDataChange({ message: messageData, schedules });
-        onNext();
+      const baseUrl = apiUrl.trim().replace(/\/+$/, '');
+      
+      console.log('TEST SEND: Sending to URL:', `${baseUrl}/message/sendText/${encodeURIComponent(instanceId)}`, {
+        instance: instanceId,
+        headers: buildHeaders(),
+        number: normalizedPhone,
+        text: mergedMessage,
+        originalInput: testSendNumber
+      });
+      
+      // Send the actual test message via API using normalized phone number
+      const response = await fetch(`${baseUrl}/message/sendText/${encodeURIComponent(instanceId)}`, {
+        method: 'POST',
+        headers: buildHeaders(),
+        body: JSON.stringify({
+          number: normalizedPhone,
+          text: mergedMessage
+        })
+      });
+      
+      console.log('TEST SEND: Response:', {
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries())
+      });
+      
+      if (response.ok) {
+        const responseData = await response.json().catch(() => ({}));
+        alert(`✅ Test message sent successfully!\n\nTo: ${normalizedPhone} (normalized from ${testSendNumber})\nMessage: "${mergedMessage}"\n\nResponse: ${response.status} ${response.statusText}`);
       } else {
-        setError(result.error);
+        let errorMessage = `Failed to send test message (${response.status} ${response.statusText})`;
+        
+        if (response.status === 400) {
+          errorMessage += '\\n\\nThis usually means invalid phone number format or missing instance.';
+        } else if (response.status === 401 || response.status === 403) {
+          errorMessage += '\\n\\nAuthentication failed. Please check your API key.';
+        } else if (response.status === 404) {
+          errorMessage += '\\n\\nInstance not found. Please check the selected WhatsApp instance.';
+        }
+        
+        alert(`❌ ${errorMessage}`);
       }
     } catch (error) {
-      setError('Failed to save message and schedules');
-      console.error('Save message error:', error);
+      console.error('Test send error:', error);
+      alert(`❌ Test send failed: ${error.message}\\n\\nPlease check:\\n• API URL and key are correct\\n• WhatsApp instance is connected\\n• Phone number format is valid`);
     } finally {
-      setLoading(false);
+      setIsSendingTest(false);
     }
   };
 
-  // Common emojis for quick access
-  const commonEmojis = ['😊', '👋', '🎉', '💪', '🔥', '💝', '🌟', '👍', '❤️', '😍'];
+  const handleNext = () => {
+    if (!messageText.trim()) {
+      alert('Please enter a message');
+      return;
+    }
+    
+    if (scheduleEnabled && !validateSchedule()) {
+      alert('Please fix schedule errors before proceeding');
+      return;
+    }
+    
+    const data = {
+      message: messageText,
+      attachments,
+      scheduleEnabled,
+      scheduleDateTime,
+      characterCount,
+      smsSegments,
+      templates: savedTemplates.filter(t => t.category === 'Custom')
+    };
+    
+    onNext(data);
+  };
 
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <h2 className="text-xl font-semibold text-gray-900 mb-2">Message Studio</h2>
-        <p className="text-gray-600">Compose your campaign message with placeholders, emojis, and attachments.</p>
+    <div className="step3-container">
+      <div className="step-header">
+        <h2>Step 3: Advanced Message Studio</h2>
+        <p>Compose your message with advanced features</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Message Editor - Left Column */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Message Text Area */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm font-medium text-gray-700">
-                Message Text *
-              </label>
-              <div className="flex items-center space-x-4 text-sm text-gray-500">
-                <span>{characterCount} characters</span>
-                <span className={messageSegments > 1 ? 'text-orange-600' : ''}>
-                  {messageSegments} segment{messageSegments > 1 ? 's' : ''}
-                </span>
-              </div>
-            </div>
-            
-            <div className="relative">
-              <textarea
-                id="message-textarea"
-                value={messageText}
-                onChange={(e) => setMessageText(e.target.value)}
-                placeholder="Type your message here... Use {name}, {city} etc. for personalization"
-                rows={8}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              />
-              
-              {/* Toolbar */}
-              <div className="flex items-center justify-between mt-2">
-                <div className="flex space-x-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowPlaceholders(!showPlaceholders)}
-                    className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
-                  >
-                    {'{}'} Placeholders
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                    className="px-3 py-1 text-sm bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200"
-                  >
-                    😊 Emojis
-                  </button>
-                </div>
-                
-                <div className="flex space-x-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowTemplates(!showTemplates)}
-                    className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
-                  >
-                    📝 Templates
-                  </button>
-                  <button
-                    type="button"
-                    onClick={saveAsTemplate}
-                    className="px-3 py-1 text-sm bg-green-100 text-green-700 rounded hover:bg-green-200"
-                  >
-                    💾 Save Template
-                  </button>
-                </div>
-              </div>
-
-              {/* Placeholder Dropdown */}
-              {showPlaceholders && (
-                <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-md shadow-lg z-10">
-                  <div className="p-2">
-                    <div className="text-xs font-medium text-gray-500 mb-2">Available Variables:</div>
-                    {availableVariables.length > 0 ? (
-                      <div className="space-y-1">
-                        {availableVariables.map(variable => (
-                          <button
-                            key={variable}
-                            onClick={() => insertPlaceholder(variable)}
-                            className="w-full text-left px-2 py-1 text-sm hover:bg-gray-100 rounded"
-                          >
-                            {'{' + variable + '}'}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-sm text-gray-500">Add contacts first to see available variables</div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Emoji Picker */}
-              {showEmojiPicker && (
-                <div className="absolute top-full left-0 mt-1 w-80 bg-white border border-gray-200 rounded-md shadow-lg z-10">
-                  <div className="p-3">
-                    <div className="text-xs font-medium text-gray-500 mb-2">Common Emojis:</div>
-                    <div className="grid grid-cols-10 gap-1">
-                      {commonEmojis.map(emoji => (
-                        <button
-                          key={emoji}
-                          onClick={() => insertEmoji(emoji)}
-                          className="w-8 h-8 text-lg hover:bg-gray-100 rounded"
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="text-xs text-gray-500 mt-2">
-                      TODO: Add full emoji picker component
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Template Dropdown */}
-              {showTemplates && (
-                <div className="absolute top-full right-0 mt-1 w-64 bg-white border border-gray-200 rounded-md shadow-lg z-10">
-                  <div className="p-2">
-                    <div className="text-xs font-medium text-gray-500 mb-2">Saved Templates:</div>
-                    {templates.length > 0 ? (
-                      <div className="space-y-1 max-h-48 overflow-y-auto">
-                        {templates.map(template => (
-                          <button
-                            key={template.id}
-                            onClick={() => loadTemplate(template)}
-                            className="w-full text-left px-2 py-2 text-sm hover:bg-gray-100 rounded"
-                          >
-                            <div className="font-medium">{template.name}</div>
-                            <div className="text-xs text-gray-500 truncate">
-                              {template.message.text.substring(0, 50)}...
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-sm text-gray-500">No saved templates</div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {messageSegments > 3 && (
-              <div className="mt-2 text-sm text-orange-600">
-                ⚠️ Long messages may be expensive and have delivery issues
-              </div>
+      <div className="message-studio">
+        {/* Message Editor with Toolbar */}
+        <div className="message-editor-section">
+          <div className="editor-toolbar">
+            <button 
+              onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+              className="toolbar-btn"
+              title="Insert Emoji"
+            >
+              😀 Emoji
+            </button>
+            <button 
+              onClick={() => setShowTemplatePicker(!showTemplatePicker)}
+              className="toolbar-btn"
+              title="Load Template"
+            >
+              📋 Templates
+            </button>
+            <button 
+              onClick={() => setShowSaveTemplate(!showSaveTemplate)}
+              className="toolbar-btn"
+              title="Save as Template"
+            >
+              💾 Save Template
+            </button>
+          </div>
+          
+          <textarea
+            ref={textareaRef}
+            value={messageText}
+            onChange={(e) => setMessageText(e.target.value)}
+            onSelect={updateCursorPosition}
+            onKeyUp={updateCursorPosition}
+            onClick={updateCursorPosition}
+            placeholder="Type your message here... Use {name}, {phone}, {email} as placeholders"
+            className="message-textarea"
+            rows={8}
+          />
+          
+          <div className={`character-count ${showCharacterWarning ? 'warning' : ''}`}>
+            <span>Characters: {characterCount}</span>
+            <span>SMS Segments: {smsSegments}</span>
+            {showCharacterWarning && (
+              <span className="warning-text">⚠️ Message will be sent as {smsSegments} SMS parts</span>
             )}
           </div>
+        </div>
 
-          {/* Attachments */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Attachments
-            </label>
-            <div className="space-y-2">
-              <input
-                type="file"
-                multiple
-                onChange={handleFileUpload}
-                className="hidden"
-                id="attachment-upload"
-                accept="image/*,.pdf,.doc,.docx"
-              />
-              <label
-                htmlFor="attachment-upload"
-                className="inline-flex items-center px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 cursor-pointer"
-              >
-                📎 Add Attachments
-              </label>
+        {/* Placeholder Panel */}
+        <div className="placeholders-panel">
+          <h3>Insert Placeholders</h3>
+          <div className="placeholder-grid">
+            {(() => {
+              // Extract available headers/variables from contacts data
+              const availableHeaders = new Set(['phone']); // Always include phone
               
-              {attachments.length > 0 && (
-                <div className="grid grid-cols-2 gap-2">
-                  {attachments.map(attachment => (
-                    <div key={attachment.id} className="flex items-center space-x-2 p-2 bg-gray-50 rounded">
-                      {attachment.meta.previewUrl ? (
-                        <img src={attachment.meta.previewUrl} alt="" className="w-8 h-8 object-cover rounded" />
-                      ) : (
-                        <div className="w-8 h-8 bg-gray-200 rounded flex items-center justify-center text-xs">
-                          📄
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium truncate">{attachment.name}</div>
-                        <div className="text-xs text-gray-500">{(attachment.size / 1024).toFixed(1)} KB</div>
-                      </div>
-                      <button
-                        onClick={() => removeAttachment(attachment.id)}
-                        className="text-red-500 hover:text-red-700"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+              if (contactsData?.contacts?.rows?.length > 0) {
+                // Get from vars object of first valid contact
+                const firstContact = contactsData.contacts.rows.find(c => c.isValid);
+                if (firstContact?.vars) {
+                  Object.keys(firstContact.vars).forEach(key => availableHeaders.add(key));
+                }
+              }
+              
+              const headers = Array.from(availableHeaders);
+              
+              if (headers.length > 1) {
+                return headers.map(header => (
+                  <button 
+                    key={header}
+                    onClick={() => insertPlaceholder(header)}
+                    className="placeholder-btn"
+                  >
+                    {`{${header}}`}
+                  </button>
+                ));
+              } else {
+                // Fallback to default placeholders
+                return (
+                  <>
+                    <button onClick={() => insertPlaceholder('name')} className="placeholder-btn">{'{name}'}</button>
+                    <button onClick={() => insertPlaceholder('phone')} className="placeholder-btn">{'{phone}'}</button>
+                    <button onClick={() => insertPlaceholder('email')} className="placeholder-btn">{'{email}'}</button>
+                  </>
+                );
+              }
+            })()}
+          </div>
+        </div>
+
+        {/* Emoji Picker */}
+        {showEmojiPicker && (
+          <div className="emoji-picker">
+            <div className="emoji-categories">
+              {Object.keys(EMOJI_CATEGORIES).map(category => (
+                <button
+                  key={category}
+                  onClick={() => setActiveEmojiCategory(category)}
+                  className={`emoji-category ${activeEmojiCategory === category ? 'active' : ''}`}
+                >
+                  {category}
+                </button>
+              ))}
+            </div>
+            <div className="emoji-grid">
+              {EMOJI_CATEGORIES[activeEmojiCategory].map((emoji, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => insertEmoji(emoji)}
+                  className="emoji-btn"
+                >
+                  {emoji}
+                </button>
+              ))}
             </div>
           </div>
+        )}
 
-          {/* Schedule Manager */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm font-medium text-gray-700">
-                Send Schedule *
-              </label>
-              <button
-                onClick={addSchedule}
-                className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
-              >
-                + Add Schedule
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              {schedules.map(schedule => (
-                <div key={schedule.id} className="flex items-center space-x-3 p-3 bg-gray-50 rounded">
-                  <select
-                    value={schedule.type}
-                    onChange={(e) => updateSchedule(schedule.id, 'type', e.target.value)}
-                    className="px-2 py-1 border border-gray-300 rounded text-sm"
-                  >
-                    <option value="one-time">One-time</option>
-                    <option value="recurring">Recurring (TODO)</option>
-                  </select>
-                  
-                  <input
-                    type="datetime-local"
-                    value={new Date(schedule.timestamp).toISOString().slice(0, 16)}
-                    onChange={(e) => updateSchedule(schedule.id, 'timestamp', new Date(e.target.value).getTime())}
-                    className="px-2 py-1 border border-gray-300 rounded text-sm"
-                  />
-                  
-                  <input
-                    type="text"
-                    value={schedule.description}
-                    onChange={(e) => updateSchedule(schedule.id, 'description', e.target.value)}
-                    placeholder="Description"
-                    className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
-                  />
-                  
-                  <button
-                    onClick={() => removeSchedule(schedule.id)}
-                    className="text-red-500 hover:text-red-700"
-                  >
-                    Remove
+        {/* Template Picker */}
+        {showTemplatePicker && (
+          <div className="template-picker">
+            <h3>Load Template</h3>
+            <div className="template-list">
+              {savedTemplates.map(template => (
+                <div key={template.id} className="template-item">
+                  <div className="template-info">
+                    <strong>{template.name}</strong>
+                    <span className="template-category">{template.category}</span>
+                    <p className="template-preview">{template.text.substring(0, 100)}...</p>
+                  </div>
+                  <button onClick={() => loadTemplate(template)} className="load-template-btn">
+                    Load
                   </button>
                 </div>
               ))}
-              
-              {schedules.length === 0 && (
-                <div className="text-sm text-gray-500 italic">
-                  No schedules added. Click "Add Schedule" to create one.
-                </div>
-              )}
             </div>
           </div>
+        )}
 
-          {/* Test Send */}
-          <div className="pt-4 border-t">
-            <button
-              onClick={handleTestSend}
-              className="px-4 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700"
+        {/* Save Template Modal */}
+        {showSaveTemplate && (
+          <div className="save-template-modal">
+            <h3>Save as Template</h3>
+            <input
+              type="text"
+              placeholder="Template name"
+              value={templateName}
+              onChange={(e) => setTemplateName(e.target.value)}
+              className="template-name-input"
+            />
+            <select
+              value={templateCategory}
+              onChange={(e) => setTemplateCategory(e.target.value)}
+              className="template-category-select"
             >
-              📤 Send Test Message
-            </button>
-            <p className="text-xs text-gray-500 mt-1">
-              Sends a test message (respects dry-run setting)
-            </p>
+              <option value="Custom">Custom</option>
+              <option value="Onboarding">Onboarding</option>
+              <option value="Marketing">Marketing</option>
+              <option value="Reminders">Reminders</option>
+              <option value="Support">Support</option>
+            </select>
+            <div className="template-actions">
+              <button onClick={saveAsTemplate} className="save-btn">Save</button>
+              <button onClick={() => setShowSaveTemplate(false)} className="cancel-btn">Cancel</button>
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Preview Panel - Right Column */}
-        <div className="space-y-6">
-          <div>
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Message Preview</h3>
-            
-            {previewContacts.length > 0 ? (
-              <div className="space-y-4">
-                {previewContacts.map((contact, index) => (
-                  <div key={contact.id} className="p-3 bg-gray-50 rounded-lg">
-                    <div className="text-sm font-medium text-gray-700 mb-2">
-                      {contact.vars.name || `Contact ${index + 1}`}
-                    </div>
-                    <div className="bg-white p-3 rounded border">
-                      <div className="text-sm whitespace-pre-wrap">
-                        {previewMessage(contact)}
-                      </div>
-                      {attachments.length > 0 && (
-                        <div className="mt-2 pt-2 border-t">
-                          <div className="text-xs text-gray-500">
-                            📎 {attachments.length} attachment{attachments.length > 1 ? 's' : ''}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
+        {/* Attachments Manager */}
+        <div className="attachments-section">
+          <h3>Attachments</h3>
+          <input
+            type="file"
+            multiple
+            onChange={handleFileAttachment}
+            className="file-input"
+            accept=".jpg,.jpeg,.png,.gif,.pdf,.doc,.docx"
+          />
+          <div className="attachment-list">
+            {attachments.map((attachment) => (
+              <div key={attachment.id} className="attachment-item">
+                <div className="attachment-info">
+                  <span className="attachment-name">{attachment.name}</span>
+                  <span className="attachment-size">{(attachment.size / 1024).toFixed(1)} KB</span>
+                  <span className="attachment-type">{attachment.type}</span>
+                </div>
+                <button onClick={() => removeAttachment(attachment.id)} className="remove-attachment-btn">
+                  ❌
+                </button>
               </div>
-            ) : (
-              <div className="text-sm text-gray-500 italic">
-                Add contacts in the previous step to see message preview
-              </div>
-            )}
+            ))}
           </div>
-
-          {/* Schedule Timeline */}
-          {schedules.length > 0 && (
-            <div>
-              <h3 className="text-lg font-medium text-gray-900 mb-4">Schedule Timeline</h3>
-              <div className="space-y-2">
-                {schedules
-                  .sort((a, b) => a.timestamp - b.timestamp)
-                  .map(schedule => (
-                    <div key={schedule.id} className="p-2 bg-blue-50 rounded text-sm">
-                      <div className="font-medium">
-                        {new Date(schedule.timestamp).toLocaleString()}
-                      </div>
-                      <div className="text-gray-600">{schedule.description}</div>
-                    </div>
-                  ))}
-              </div>
+          {attachments.length > 0 && (
+            <div className="attachment-note">
+              💡 Attachments are stored as metadata. Actual file upload occurs during campaign execution.
             </div>
           )}
         </div>
+
+        {/* Schedule Manager */}
+        <div className="schedule-section">
+          <h3>Schedule Manager</h3>
+          <label className="schedule-checkbox">
+            <input
+              type="checkbox"
+              checked={scheduleEnabled}
+              onChange={(e) => setScheduleEnabled(e.target.checked)}
+            />
+            Schedule message for later
+          </label>
+          
+          {scheduleEnabled && (
+            <div className="schedule-controls">
+              <input
+                type="datetime-local"
+                value={scheduleDateTime}
+                onChange={(e) => setScheduleDateTime(e.target.value)}
+                className="datetime-input"
+              />
+              {scheduleErrors.length > 0 && (
+                <div className="schedule-errors">
+                  {scheduleErrors.map((error, idx) => (
+                    <div key={idx} className="error-message">❌ {error}</div>
+                  ))}
+                </div>
+              )}
+              {scheduleDateTime && scheduleErrors.length === 0 && (
+                <div className="schedule-info">
+                  ✅ Scheduled for: {formatDateTime(parseDateTime(scheduleDateTime))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Preview Section */}
+        <div className="preview-section">
+          <button 
+            onClick={() => setShowPreview(!showPreview)}
+            className="preview-toggle-btn"
+          >
+            {showPreview ? 'Hide Preview' : 'Show Message Preview'}
+          </button>
+          
+          {showPreview && (
+            <div className="preview-content">
+              <h3>Message Preview (Sample Contacts)</h3>
+              {previewContacts.length > 0 ? (
+                previewContacts.map((contact, idx) => (
+                  <div key={idx} className="preview-item">
+                    <div className="preview-header">
+                      <strong>To: {contact.vars?.name || contact.name || 'Contact'}</strong>
+                      <span className="preview-phone">{contact.phone}</span>
+                    </div>
+                    <div className="preview-message">{contact.previewText}</div>
+                    <div className="preview-stats">
+                      Characters: {contact.previewText.length} | 
+                      SMS Parts: {Math.ceil(contact.previewText.length / 160) || 1}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="no-preview">No contacts available for preview</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Test Send */}
+        <div className="test-send-section">
+          <h3>Test Send</h3>
+          <div className="test-send-controls">
+            <input
+              type="tel"
+              placeholder="Enter phone number (e.g., +1234567890)"
+              value={testSendNumber}
+              onChange={(e) => setTestSendNumber(e.target.value)}
+              className="test-phone-input"
+            />
+            <button 
+              onClick={handleTestSend}
+              disabled={isSendingTest || !messageText.trim()}
+              className="test-send-btn"
+            >
+              {isSendingTest ? 'Sending...' : '📤 Send Test'}
+            </button>
+          </div>
+          <div className="test-send-note">
+            💡 Test sends respect dry run mode and won't actually deliver messages
+          </div>
+        </div>
       </div>
 
-      {error && (
-        <div className="mt-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
-          {error}
-        </div>
-      )}
-
-      {/* Step Actions */}
-      <div className="mt-8 pt-6 border-t">
-        <div className="flex justify-between">
-          <div>
-            <button
-              onClick={onBack}
-              className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium"
-            >
-              ← Back
-            </button>
-          </div>
-          <div>
-            <button
-              onClick={handleNext}
-              disabled={loading || !messageText.trim() || schedules.length === 0}
-              className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-            >
-              {loading ? 'Saving...' : 'Next: Review & Publish →'}
-            </button>
-          </div>
-        </div>
+      {/* Navigation */}
+      <div className="step-navigation">
+        <button onClick={onBack} className="nav-btn secondary">
+          ← Back to Contacts
+        </button>
+        <button 
+          onClick={handleNext} 
+          className="nav-btn primary"
+          disabled={!messageText.trim() || (scheduleEnabled && scheduleErrors.length > 0)}
+        >
+          Next: Review & Launch →
+        </button>
       </div>
     </div>
   );
