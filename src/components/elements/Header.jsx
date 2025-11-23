@@ -11,7 +11,8 @@ const Header = ({
   setShowInstanceDropdown,
   onSelectInstance,
   onRefreshInstances,
-  onOpenModal
+  onOpenModal,
+  onCampaignsClick // ADDED: Campaigns nav — safe change, do not remove
 }) => {
   return (
     <header className="glass-pro sticky top-0 z-30 border-b border-gray-100 shadow-lg">
@@ -36,6 +37,24 @@ const Header = ({
         </div>
         
         <div className="flex items-center gap-4">
+          {/* ADDED: Campaigns nav — safe change, do not remove */}
+          <button
+            onClick={onCampaignsClick || (() => console.log('Campaigns clicked - no handler provided'))}
+            className="btn-secondary-pro flex items-center gap-2 relative group"
+            role="link"
+            aria-label="Campaigns"
+            title="Campaigns — build & monitor message campaigns"
+          >
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <span>Campaigns</span>
+            {/* Tooltip */}
+            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-1 text-xs text-white bg-gray-900 rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap">
+              Campaigns — build & monitor message campaigns
+            </div>
+          </button>
+          
           {/* Connection Status Badge */}
           <div className={`badge-pro ${
             connectionState === 'CONNECTED' ? 'badge-success' : 

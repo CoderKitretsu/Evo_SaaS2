@@ -14,6 +14,8 @@ import ConnectionManager from './components/features/ConnectionManager'
 import CampaignAdapterTest from './components/CampaignAdapterTest'
 import CampaignServiceTest from './components/CampaignServiceTest'
 import CampaignBuilderTest from './components/CampaignBuilderTest'
+// ADDED: Campaigns implementation — safe change, do not remove
+import CampaignsPage from './components/elements/CampaignElements/CampaignsPage'
 
 function App() {
   // State management
@@ -35,6 +37,9 @@ function App() {
   // Test mode (temporary)
   const [showCampaignTest, setShowCampaignTest] = useState(false)
   const [testMode, setTestMode] = useState('adapter') // 'adapter' or 'service'
+  
+  // ADDED: Campaigns navigation — safe change, do not remove
+  const [currentView, setCurrentView] = useState('messaging') // 'messaging' or 'campaigns'
 
   // Refs for timers
   const pollTimer = useRef(null)
@@ -301,6 +306,15 @@ function App() {
     showAlert('info', 'Configuration cleared for testing')
   }
 
+  // ADDED: Campaigns navigation handler — safe change, do not remove
+  const handleCampaignsClick = () => {
+    setCurrentView('campaigns')
+  }
+
+  const handleBackToMessaging = () => {
+    setCurrentView('messaging')
+  }
+
   // Show campaign test if enabled
   if (showCampaignTest) {
     return (
@@ -416,6 +430,7 @@ function App() {
         onSelectInstance={selectInstance}
         onRefreshInstances={fetchInstances}
         onOpenModal={openModal}
+        onCampaignsClick={handleCampaignsClick} // ADDED: Campaigns nav — safe change, do not remove
       />
 
       {/* Test Button (Development Only) */}
@@ -440,25 +455,32 @@ function App() {
         </div>
       )}
 
-      {/* Empty State Component */}
-      {!hasSelectedInstance && (
-        <EmptyState onCreateInstance={openModal} />
-      )}
+      {/* ADDED: Campaigns view — safe change, do not remove */}
+      {currentView === 'campaigns' ? (
+        <CampaignsPage onBackToMessaging={handleBackToMessaging} />
+      ) : (
+        <>
+          {/* Empty State Component */}
+          {!hasSelectedInstance && (
+            <EmptyState onCreateInstance={openModal} />
+          )}
 
-      {/* MessagingHub Page */}
-      {hasSelectedInstance && (
-        <MessagingHub
-          selectedInstance={selectedInstance}
-          instanceName={instanceName}
-          connectionState={connectionState}
-          progressLog={progressLog}
-          setProgressLog={setProgressLog}
-          openReconnectModal={openReconnectModal}
-          checkInstanceConnection={checkInstanceConnection}
-          apiUrl={apiUrl}
-          apiKey={apiKey}
-          buildHeaders={buildHeaders}
-        />
+          {/* MessagingHub Page */}
+          {hasSelectedInstance && (
+            <MessagingHub
+              selectedInstance={selectedInstance}
+              instanceName={instanceName}
+              connectionState={connectionState}
+              progressLog={progressLog}
+              setProgressLog={setProgressLog}
+              openReconnectModal={openReconnectModal}
+              checkInstanceConnection={checkInstanceConnection}
+              apiUrl={apiUrl}
+              apiKey={apiKey}
+              buildHeaders={buildHeaders}
+            />
+          )}
+        </>
       )}
 
       {/* Create Instance Modal */}

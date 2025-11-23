@@ -158,14 +158,36 @@ export function getDraft(draftId) {
 
 /**
  * List all drafts
- * @returns {Array<Object>} Array of draft metadata
+ * @returns {Object} Success object with drafts array
  */
 export function listDrafts() {
   try {
-    return campaignAdapter.listDrafts();
+    const draftList = campaignAdapter.listDrafts();
+    const fullDrafts = draftList.map(draftMeta => {
+      try {
+        const fullDraft = campaignAdapter.getDraft(draftMeta.draftId);
+        return fullDraft ? {
+          ...fullDraft,
+          draftId: draftMeta.draftId,
+          name: fullDraft.meta?.name || draftMeta.name || 'Untitled Draft'
+        } : null;
+      } catch (error) {
+        console.error(`Failed to load draft ${draftMeta.draftId}:`, error);
+        return null;
+      }
+    }).filter(Boolean);
+    
+    return {
+      success: true,
+      drafts: fullDrafts
+    };
   } catch (error) {
     console.error('Failed to list drafts:', error);
-    return [];
+    return {
+      success: false,
+      error: error.message,
+      drafts: []
+    };
   }
 }
 
@@ -263,10 +285,18 @@ export function publishDraftAsCampaign(draftId) {
  */
 export function listCampaigns() {
   try {
-    return campaignAdapter.listCampaigns();
+    const campaigns = campaignAdapter.listCampaigns();
+    return {
+      success: true,
+      campaigns: campaigns || []
+    };
   } catch (error) {
     console.error('Failed to list campaigns:', error);
-    return [];
+    return {
+      success: false,
+      error: error.message,
+      campaigns: []
+    };
   }
 }
 
