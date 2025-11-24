@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
 import campaignService from './campaignService.js';
 import './CampaignDetail.css';
 
@@ -7,9 +6,7 @@ import './CampaignDetail.css';
  * CampaignDetail - Detailed campaign view with live updates
  * Implements Overview/Contacts/Logs/Settings tabs with real-time progress
  */
-const CampaignDetail = () => {
-  const { id: campaignId } = useParams();
-  const navigate = useNavigate();
+const CampaignDetail = ({ campaignId, onNavigate }) => {
   
   // State
   const [campaign, setCampaign] = useState(null);
@@ -180,14 +177,14 @@ const CampaignDetail = () => {
         case 'duplicate':
           result = campaignService.duplicateCampaign(campaignId);
           if (result.success) {
-            navigate(`/campaigns/new?draftId=${result.draftId}`);
+            alert('Campaign duplicated successfully! Check your drafts.');
           }
           break;
         case 'delete':
           if (confirm('Are you sure you want to delete this campaign? This cannot be undone.')) {
             result = campaignService.deleteCampaign(campaignId);
             if (result.success) {
-              navigate('/campaigns');
+              onNavigate();
             }
           }
           break;
@@ -280,7 +277,7 @@ const CampaignDetail = () => {
           <h3>Error Loading Campaign</h3>
           <p>{error}</p>
           <div className="error-actions">
-            <button onClick={() => navigate('/campaigns')} className="btn-secondary">
+            <button onClick={onNavigate} className="btn-secondary">
               Back to Campaigns
             </button>
             <button onClick={loadCampaign} className="btn-primary">
@@ -299,7 +296,7 @@ const CampaignDetail = () => {
           <div className="error-icon">📭</div>
           <h3>Campaign Not Found</h3>
           <p>The campaign you're looking for doesn't exist or has been deleted.</p>
-          <button onClick={() => navigate('/campaigns')} className="btn-primary">
+          <button onClick={onNavigate} className="btn-primary">
             Back to Campaigns
           </button>
         </div>
@@ -312,7 +309,7 @@ const CampaignDetail = () => {
       {/* Header */}
       <div className="detail-header">
         <div className="header-nav">
-          <button onClick={() => navigate('/campaigns')} className="back-btn">
+          <button onClick={onNavigate} className="back-btn">
             ← Back to Campaigns
           </button>
         </div>

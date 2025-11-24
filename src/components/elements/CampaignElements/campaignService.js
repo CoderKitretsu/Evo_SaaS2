@@ -149,10 +149,15 @@ export function saveDraft(draftId, draftData) {
  */
 export function getDraft(draftId) {
   try {
-    return campaignAdapter.getDraft(draftId);
+    const draft = campaignAdapter.getDraft(draftId);
+    if (draft) {
+      return { success: true, draft };
+    } else {
+      return { success: false, error: 'Draft not found' };
+    }
   } catch (error) {
     console.error('Failed to get draft:', error);
-    return null;
+    return { success: false, error: error.message || 'Unknown error' };
   }
 }
 
@@ -307,10 +312,15 @@ export function listCampaigns() {
  */
 export function getCampaign(campaignId) {
   try {
-    return campaignAdapter.getCampaign(campaignId);
+    const campaign = campaignAdapter.getCampaign(campaignId);
+    if (campaign) {
+      return { success: true, campaign };
+    } else {
+      return { success: false, error: 'Campaign not found' };
+    }
   } catch (error) {
     console.error('Failed to get campaign:', error);
-    return null;
+    return { success: false, error: error.message || 'Unknown error' };
   }
 }
 

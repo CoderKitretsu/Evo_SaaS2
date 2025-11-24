@@ -2,7 +2,579 @@ import React, { useState, useEffect } from 'react';
 import campaignService from './campaignService.js';
 import CampaignCard from './CampaignCard.jsx';
 import CampaignBuilder from './CampaignBuilder.jsx';
+import CampaignDetail from './CampaignDetail.jsx';
 import './CampaignsPage.css';
+
+/**
+ * CampaignDetailWrapper - Wrapper for CampaignDetail without React Router
+ */
+const CampaignDetailWrapper = ({ campaignId, onBack, onBackToMessaging }) => {
+  return (
+    <div className="campaign-detail-wrapper">
+      {/* Custom navigation header */}
+      <div className="detail-nav-header">
+        <button onClick={onBack} className="back-btn">
+          ← Back to Campaigns
+        </button>
+        {onBackToMessaging && (
+          <button onClick={onBackToMessaging} className="back-btn secondary">
+            ← Back to Messaging
+          </button>
+        )}
+      </div>
+      
+      {/* Modified CampaignDetail that works without router */}
+      <CampaignDetailContent campaignId={campaignId} onNavigate={onBack} />
+    </div>
+  );
+};
+
+/**
+ * CampaignDetailContent - Core detail functionality without router dependencies
+ */
+const CampaignDetailContent = ({ campaignId, onNavigate }) => {
+  // State
+  const [campaign, setCampaign] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [activeTab, setActiveTab] = useState('overview');
+  
+  // Contacts tab state
+  const [contactsFilter, setContactsFilter] = useState({
+    search: '',
+    status: 'all'
+  });
+  const [filteredContacts, setFilteredContacts] = useState([]);
+  
+  // Logs state
+  const [logs, setLogs] = useState([]);
+
+  // Load campaign on mount
+  useEffect(() => {
+    loadCampaign();
+  }, [campaignId]);
+
+  // Filter contacts when filter changes
+  useEffect(() => {
+    if (campaign?.perContact) {
+      applyContactsFilter();
+    }
+  }, [campaign, contactsFilter]);
+
+  const loadCampaign = async () => {
+    try {
+      setLoading(true);
+      
+      console.log('=== LOADING CAMPAIGN DEBUG ===');
+      console.log('Campaign ID to load:', campaignId);
+      console.log('Type of campaign ID:', typeof campaignId);
+      
+      // Debug: Check what keys exist in localStorage
+      const campaignKeys = Object.keys(localStorage).filter(key => key.includes('campaign'));
+      console.log('Campaign-related keys in localStorage:', campaignKeys);
+      
+      // First try to load as a published campaign
+      console.log('Attempting to load as published campaign...');
+      let result = campaignService.getCampaign(campaignId);
+      console.log('getCampaign result:', result);
+      
+      if (result.success) {
+        console.log('✅ Found as published campaign:', result);
+        setCampaign(result.campaign);
+        loadLogs(result.campaign);
+      } else {
+        // If not found as campaign, try to load as draft
+        console.log('❌ Campaign not found, trying as draft...');
+        result = campaignService.getDraft(campaignId);
+        console.log('getDraft result:', result);
+        
+        if (result.success) {
+          console.log('✅ Found as draft:', result);
+          // Convert draft to campaign-like structure for display
+          const draftAsCampaign = {
+            ...result.draft,
+            campaignId: result.draft.draftId,
+            status: 'Draft',
+            progress: { 
+              sent: 0, 
+              pending: result.draft.contacts?.valid || 0, 
+              failed: 0 
+            },
+            createdAt: result.draft.createdAt || Date.now(),
+            updatedAt: result.draft.updatedAt || Date.now()
+          };
+          console.log('Converted draft to campaign format:', draftAsCampaign);
+          setCampaign(draftAsCampaign);
+          loadLogs(draftAsCampaign);
+        } else {
+          console.error('❌ Neither campaign nor draft found');
+          console.error('Final error:', result.error);
+          
+          // Additional debug: try to find any campaign data
+          const allCampaignData = [];
+          for (let key of campaignKeys) {
+            try {
+              const data = JSON.parse(localStorage.getItem(key));
+              allCampaignData.push({ key, data });
+            } catch (e) {
+              console.error('Failed to parse', key);
+            }
+          }
+          console.log('All campaign data found:', allCampaignData);
+          
+          setError('Campaign not found: ' + result.error);
+        }
+      }
+      console.log('=== END LOADING DEBUG ===');
+    } catch (err) {
+      console.error('Error loading campaign:', err);
+      setError('Failed to load campaign: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadLogs = (campaignData) => {
+    try {
+      const logsKey = `evosaa.campaigns.logs.${campaignId}`;
+      const storedLogs = JSON.parse(localStorage.getItem(logsKey) || '[]');
+      
+      const syntheticLogs = [];
+      if (campaignData.createdAt) {
+        syntheticLogs.push({
+          timestamp: campaignData.createdAt,
+          level: 'info',
+          message: 'Campaign created',
+          details: { status: 'Created' }
+        });
+      }
+      
+      if (campaignData.status === 'Running' && campaignData.progress?.sent > 0) {
+        syntheticLogs.push({
+          timestamp: Date.now(),
+          level: 'success',
+          message: `Sent ${campaignData.progress.sent} messages`,
+          details: { sent: campaignData.progress.sent }
+        });
+      }
+      
+      const allLogs = [...storedLogs, ...syntheticLogs].sort((a, b) => b.timestamp - a.timestamp);
+      setLogs(allLogs);
+    } catch (err) {
+      console.error('Failed to load logs:', err);
+      setLogs([]);
+    }
+  };
+
+  const applyContactsFilter = () => {
+    if (!campaign?.perContact) return;
+    
+    const contacts = Object.entries(campaign.perContact).map(([contactId, contactData]) => {
+      const contactDetails = campaign.contacts?.rows?.find(row => row.id === contactId) || {};
+      return {
+        id: contactId,
+        phone: contactDetails.phone || 'Unknown',
+        name: contactDetails.vars?.name || 'Unknown',
+        vars: contactDetails.vars || {},
+        status: contactData.status || 'pending',
+        attempts: contactData.attempts || 0,
+        lastError: contactData.lastError,
+        lastAttempt: contactData.lastAttempt
+      };
+    });
+
+    let filtered = [...contacts];
+
+    if (contactsFilter.search) {
+      const searchLower = contactsFilter.search.toLowerCase();
+      filtered = filtered.filter(contact =>
+        contact.phone.toLowerCase().includes(searchLower) ||
+        contact.name.toLowerCase().includes(searchLower)
+      );
+    }
+
+    if (contactsFilter.status !== 'all') {
+      filtered = filtered.filter(contact => contact.status === contactsFilter.status);
+    }
+
+    setFilteredContacts(filtered);
+  };
+
+  const handleCampaignAction = async (action) => {
+    try {
+      let result;
+      switch (action) {
+        case 'start':
+          result = campaignService.startCampaign(campaignId);
+          break;
+        case 'pause':
+          result = campaignService.pauseCampaign(campaignId);
+          break;
+        case 'resume':
+          result = campaignService.resumeCampaign(campaignId);
+          break;
+        case 'cancel':
+          if (confirm('Are you sure you want to cancel this campaign? This cannot be undone.')) {
+            result = campaignService.cancelCampaign(campaignId);
+          }
+          break;
+        case 'duplicate':
+          result = campaignService.duplicateCampaign(campaignId);
+          if (result.success) {
+            alert('Campaign duplicated successfully! Check your drafts.');
+          }
+          break;
+        case 'delete':
+          if (confirm('Are you sure you want to delete this campaign? This cannot be undone.')) {
+            result = campaignService.deleteCampaign(campaignId);
+            if (result.success) {
+              onNavigate(); // Go back to campaigns list
+            }
+          }
+          break;
+        default:
+          console.error('Unknown action:', action);
+          return;
+      }
+
+      if (result && result.success) {
+        await loadCampaign();
+      } else if (result) {
+        alert('Action failed: ' + result.error);
+      }
+    } catch (err) {
+      console.error('Campaign action error:', err);
+      alert('Action failed: ' + err.message);
+    }
+  };
+
+  const formatDate = (timestamp) => {
+    if (!timestamp) return 'Not set';
+    return new Date(timestamp).toLocaleString();
+  };
+
+  const getStatusColor = (status) => {
+    const colors = {
+      Draft: '#6b7280',
+      Scheduled: '#3b82f6',
+      Running: '#10b981',
+      Paused: '#f59e0b',
+      Completed: '#059669',
+      Cancelled: '#6b7280',
+      Failed: '#ef4444'
+    };
+    return colors[status] || '#6b7280';
+  };
+
+  const getProgressPercentage = () => {
+    const { sent = 0, pending = 0, failed = 0 } = campaign?.progress || {};
+    const total = sent + pending + failed;
+    return total > 0 ? Math.round((sent / total) * 100) : 0;
+  };
+
+  if (loading) {
+    return (
+      <div className="campaign-detail">
+        <div className="loading-state">
+          <div className="loading-spinner"></div>
+          <p>Loading campaign...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="campaign-detail">
+        <div className="error-state">
+          <div className="error-icon">⚠️</div>
+          <h3>Error Loading Campaign</h3>
+          <p>{error}</p>
+          <div className="error-actions">
+            <button onClick={onNavigate} className="btn-secondary">
+              Back to Campaigns
+            </button>
+            <button onClick={loadCampaign} className="btn-primary">
+              Retry
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!campaign) {
+    return (
+      <div className="campaign-detail">
+        <div className="error-state">
+          <div className="error-icon">📭</div>
+          <h3>Campaign Not Found</h3>
+          <p>The campaign you're looking for doesn't exist or has been deleted.</p>
+          <button onClick={onNavigate} className="btn-primary">
+            Back to Campaigns
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="campaign-detail-content">
+      {/* Campaign Header */}
+      <div className="detail-header">        
+        <div className="header-content">
+          <div className="header-info">
+            <h1>{campaign.meta?.name || 'Untitled Campaign'}</h1>
+            <div 
+              className="status-pill large"
+              style={{ backgroundColor: getStatusColor(campaign.status) }}
+            >
+              {campaign.status}
+            </div>
+          </div>
+          
+          <div className="header-meta">
+            <span className="meta-item">📱 Instance: {campaign.meta?.instanceId}</span>
+            <span className="meta-item">👥 {campaign.contacts?.valid || 0} contacts</span>
+            <span className="meta-item">📅 Created: {formatDate(campaign.createdAt)}</span>
+            {campaign.meta?.dryRun && <span className="dry-run-badge">DRY RUN</span>}
+          </div>
+        </div>
+
+        <div className="header-actions">
+          <div className="action-buttons">
+            <button onClick={() => handleCampaignAction('duplicate')} className="btn-secondary">
+              📋 Duplicate
+            </button>
+            
+            {['scheduled', 'paused'].includes(campaign.status?.toLowerCase()) && (
+              <button onClick={() => handleCampaignAction('start')} className="btn-primary">
+                ▶️ Start
+              </button>
+            )}
+            
+            {campaign.status?.toLowerCase() === 'running' && (
+              <button onClick={() => handleCampaignAction('pause')} className="btn-warning">
+                ⏸️ Pause
+              </button>
+            )}
+            
+            {campaign.status?.toLowerCase() === 'paused' && (
+              <button onClick={() => handleCampaignAction('resume')} className="btn-success">
+                ▶️ Resume
+              </button>
+            )}
+            
+            {['scheduled', 'running', 'paused'].includes(campaign.status?.toLowerCase()) && (
+              <button onClick={() => handleCampaignAction('cancel')} className="btn-danger">
+                🛑 Cancel
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Progress Bar */}
+      <div className="progress-section">
+        <div className="progress-header">
+          <span>Campaign Progress</span>
+          <span>{getProgressPercentage()}% Complete</span>
+        </div>
+        <div className="progress-bar large">
+          <div 
+            className="progress-fill"
+            style={{ width: `${getProgressPercentage()}%` }}
+          />
+        </div>
+        <div className="progress-stats">
+          <div className="stat-card sent">
+            <div className="stat-value">{campaign.progress?.sent || 0}</div>
+            <div className="stat-label">Sent</div>
+          </div>
+          <div className="stat-card pending">
+            <div className="stat-value">{campaign.progress?.pending || 0}</div>
+            <div className="stat-label">Pending</div>
+          </div>
+          <div className="stat-card failed">
+            <div className="stat-value">{campaign.progress?.failed || 0}</div>
+            <div className="stat-label">Failed</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="tabs-section">
+        <div className="tabs-nav">
+          {['overview', 'contacts', 'logs'].map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`tab-btn ${activeTab === tab ? 'active' : ''}`}
+            >
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            </button>
+          ))}
+        </div>
+
+        <div className="tab-content">
+          {/* Overview Tab */}
+          {activeTab === 'overview' && (
+            <div className="tab-panel overview">
+              <div className="overview-grid">
+                <div className="overview-card">
+                  <h3>Campaign Details</h3>
+                  <div className="detail-grid">
+                    <div className="detail-item">
+                      <label>Name</label>
+                      <span>{campaign.meta?.name || 'Untitled'}</span>
+                    </div>
+                    <div className="detail-item">
+                      <label>Description</label>
+                      <span>{campaign.meta?.description || 'No description'}</span>
+                    </div>
+                    <div className="detail-item">
+                      <label>Instance</label>
+                      <span>{campaign.meta?.instanceId}</span>
+                    </div>
+                    <div className="detail-item">
+                      <label>Start Time</label>
+                      <span>{formatDate(campaign.meta?.startAt)}</span>
+                    </div>
+                    <div className="detail-item">
+                      <label>End Time</label>
+                      <span>{formatDate(campaign.meta?.endAt)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="overview-card">
+                  <h3>Message Content</h3>
+                  <div className="message-preview">
+                    {campaign.message?.text || 'No message content'}
+                  </div>
+                  {campaign.message?.attachments && campaign.message.attachments.length > 0 && (
+                    <div className="attachments-summary">
+                      📎 {campaign.message.attachments.length} attachment(s)
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Contacts Tab */}
+          {activeTab === 'contacts' && (
+            <div className="tab-panel contacts">
+              <div className="contacts-controls">
+                <div className="contacts-filters">
+                  <input
+                    type="text"
+                    placeholder="Search contacts..."
+                    value={contactsFilter.search}
+                    onChange={(e) => setContactsFilter(prev => ({ ...prev, search: e.target.value }))}
+                    className="search-input"
+                  />
+                  <select
+                    value={contactsFilter.status}
+                    onChange={(e) => setContactsFilter(prev => ({ ...prev, status: e.target.value }))}
+                    className="status-filter"
+                  >
+                    <option value="all">All Status</option>
+                    <option value="pending">Pending</option>
+                    <option value="sent">Sent</option>
+                    <option value="failed">Failed</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="contacts-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Phone</th>
+                      <th>Name</th>
+                      <th>Status</th>
+                      <th>Attempts</th>
+                      <th>Variables</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredContacts.map(contact => (
+                      <tr key={contact.id} className={`status-${contact.status}`}>
+                        <td>{contact.phone}</td>
+                        <td>{contact.name}</td>
+                        <td>
+                          <span className={`status-badge ${contact.status}`}>
+                            {contact.status}
+                          </span>
+                        </td>
+                        <td>{contact.attempts}</td>
+                        <td>
+                          <div className="variables-cell">
+                            {Object.entries(contact.vars).map(([key, value]) => (
+                              <span key={key} className="variable-item">
+                                {key}: {value}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                
+                {filteredContacts.length === 0 && (
+                  <div className="no-contacts">
+                    No contacts match your filter criteria
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Logs Tab */}
+          {activeTab === 'logs' && (
+            <div className="tab-panel logs">
+              <div className="logs-header">
+                <h3>Campaign Logs</h3>
+                <button onClick={() => loadLogs(campaign)} className="btn-secondary">
+                  🔄 Refresh
+                </button>
+              </div>
+              
+              <div className="logs-list">
+                {logs.map((log, idx) => (
+                  <div key={idx} className={`log-entry ${log.level}`}>
+                    <div className="log-timestamp">
+                      {formatDate(log.timestamp)}
+                    </div>
+                    <div className="log-level">
+                      {log.level.toUpperCase()}
+                    </div>
+                    <div className="log-message">
+                      {log.message}
+                    </div>
+                    {log.details && (
+                      <div className="log-details">
+                        {JSON.stringify(log.details)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                
+                {logs.length === 0 && (
+                  <div className="no-logs">
+                    No logs available for this campaign
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 /**
  * CampaignsPage - Main campaigns listing with filters and search
@@ -20,6 +592,7 @@ const CampaignsPage = ({ onBackToMessaging }) => {
   const [error, setError] = useState(null);
   const [showCampaignBuilder, setShowCampaignBuilder] = useState(false);
   const [showDrafts, setShowDrafts] = useState(true);
+  const [detailViewCampaign, setDetailViewCampaign] = useState(null);
   
   // Filters state
   const [filters, setFilters] = useState({
@@ -192,6 +765,10 @@ const CampaignsPage = ({ onBackToMessaging }) => {
   };
 
   const handleCampaignSelect = (campaign) => {
+    console.log('=== CAMPAIGN SELECTED ===');
+    console.log('Selected campaign:', campaign);
+    console.log('Campaign ID:', campaign?.campaignId || campaign?.draftId);
+    console.log('========================');
     setSelectedCampaign(campaign);
   };
 
@@ -225,7 +802,25 @@ const CampaignsPage = ({ onBackToMessaging }) => {
           }
           break;
         case 'view':
-          alert('Campaign Detail view coming soon!');
+          // Navigate to campaign detail view
+          console.log('Viewing campaign details for ID:', campaignId);
+          console.log('Selected campaign object:', selectedCampaign);
+          
+          // Debug: Check what's in localStorage
+          console.log('=== DEBUGGING CAMPAIGN STORAGE ===');
+          const allKeys = Object.keys(localStorage).filter(key => key.startsWith('evosaa.campaigns'));
+          console.log('All campaign keys in localStorage:', allKeys);
+          allKeys.forEach(key => {
+            try {
+              const data = JSON.parse(localStorage.getItem(key));
+              console.log(`${key}:`, data);
+            } catch (e) {
+              console.log(`${key}: [parse error]`, localStorage.getItem(key));
+            }
+          });
+          console.log('=== END DEBUG ===');
+          
+          setDetailViewCampaign(campaignId);
           break;
         default:
           console.error('Unknown action:', action);
@@ -280,6 +875,17 @@ const CampaignsPage = ({ onBackToMessaging }) => {
   }
 
   // Show Campaign Builder if in creation mode
+  // Show campaign detail view if selected
+  if (detailViewCampaign) {
+    return (
+      <CampaignDetailWrapper 
+        campaignId={detailViewCampaign}
+        onBack={() => setDetailViewCampaign(null)}
+        onBackToMessaging={onBackToMessaging}
+      />
+    );
+  }
+
   if (showCampaignBuilder) {
     return (
       <CampaignBuilder
@@ -520,7 +1126,17 @@ const CampaignsPage = ({ onBackToMessaging }) => {
 
               <div className="detail-actions">
                 <button
-                  onClick={() => handleCampaignAction('view', selectedCampaign.campaignId)}
+                  onClick={() => {
+                    const id = selectedCampaign.campaignId || selectedCampaign.draftId;
+                    console.log('View Details clicked - Selected campaign:', selectedCampaign);
+                    console.log('Using ID:', id);
+                    if (id) {
+                      handleCampaignAction('view', id);
+                    } else {
+                      console.error('No valid ID found in selectedCampaign');
+                      alert('Error: Cannot view details - no campaign ID found');
+                    }
+                  }}
                   className="btn-primary"
                 >
                   View Details
